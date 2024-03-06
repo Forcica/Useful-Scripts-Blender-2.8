@@ -15,33 +15,23 @@ class SelectObjectsByMaterialNameOperator(bpy.types.Operator):
    bl_idname = "object.select_by_material_name"
    bl_label = "Select by Material Name"
    
-   # This is the property where the material name is stored
    material_name: bpy.props.StringProperty(name="Material Name", default="")
    
    def execute(self, context):
-      # Deselect all objects first
       bpy.ops.object.select_all(action='DESELECT')
       
-      # Get the material name from the WindowManager
       mat_name = context.window_manager.material_name
       
-      # Track if any object has been found and selected
       found = False
 
-      # Iterate through all objects in the scene
       for obj in context.scene.objects:
-         # Check if the object has materials and is of type 'MESH'
          if obj.type == 'MESH' and obj.data.materials:
-               # Iterate through the materials of the object
                for mat_slot in obj.material_slots:
                   if mat_slot.material and mat_slot.material.name == mat_name:
-                     # Select the object
                      obj.select_set(True)
                      found = True
-                     # Set active object to the last selected
                      context.view_layer.objects.active = obj
                      
-      # If no objects were found, report it
       if not found:
          self.report({'WARNING'}, f"No objects found with the material name: {mat_name}")
          return {'CANCELLED'}
@@ -98,10 +88,8 @@ class ReconnectPrincipledBSDFOperator(bpy.types.Operator):
                if not principled_nodes or not output_node:
                   continue
                
-               # Connect Principled BSDF to Material Output
                node_tree.links.new(principled_nodes[0].outputs['BSDF'], output_node.inputs['Surface'])
                
-               # Connect Texture to Principled BSDF Base Color
                if texture_nodes:
                   node_tree.links.new(texture_nodes[0].outputs['Color'], principled_nodes[0].inputs['Base Color'])
       
@@ -128,6 +116,67 @@ class SelectObjectsWithoutMaterialsOperator(bpy.types.Operator):
       
       return {'FINISHED'}
 
+class ConnectClosestLeftNodeOperator(bpy.types.Operator):
+   """Connect the closest left node to the Principled BSDF node for all selected meshes, 
+   ensuring shared textures are only connected once."""
+   bl_idname = "material.connect_closest_left_node"
+   bl_label = "Connect Closest Left Node Once per Shared Texture Node"
+
+   def execute(self, context):
+      # Set to keep track of textures that have already been processed
+      processed_textures = set()
+
+      # Iterate over all selected objects in the scene
+      selected_objects = [obj for obj in context.selected_objects if obj.type == 'MESH']
+      for obj in selected_objects:
+         # Iterate over all materials in the object
+         for mat_slot in obj.material_slots:
+            mat = mat_slot.material
+            if not mat or not mat.use_nodes:
+               continue
+
+            # Get the nodes and links of the material
+            nodes = mat.node_tree.nodes
+            links = mat.node_tree.links
+
+            # Get the Principled BSDF node
+            principled_node = next((node for node in nodes if node.type == 'BSDF_PRINCIPLED'), None)
+            if not principled_node:
+               self.report({'WARNING'}, f"Material '{mat.name}' has no Principled BSDF node.")
+               continue
+
+            # Check if the Principled BSDF node's 'Base Color' input is linked
+            if principled_node.inputs['Base Color'].is_linked:
+               base_color_link = principled_node.inputs['Base Color'].links[0]
+               texture_node = base_color_link.from_node
+
+               # Check if this texture node's image is already processed
+               if texture_node.image and texture_node.image.name in processed_textures:
+                  continue
+
+               # If the node has multiple users, we only want to process it once
+               if texture_node.image and texture_node.image.users > 1:
+                  processed_textures.add(texture_node.image.name)
+
+               # Find the closest left node to the Image Texture node
+               left_nodes = [node for node in nodes if node.location.x < texture_node.location.x and node.type != 'OUTPUT_MATERIAL']
+               if not left_nodes:
+                  self.report({'INFO'}, f"No nodes to the left of the texture node in material '{mat.name}'.")
+                  continue
+
+               # Find the closest left node
+               closest_left_node = min(left_nodes, key=lambda node: texture_node.location.x - node.location.x)
+
+               # Perform the connection
+               for output_socket in closest_left_node.outputs:
+                  if output_socket.type == 'RGBA':
+                     new_link = links.new(output_socket, principled_node.inputs['Base Color'])
+                     if new_link:
+                        self.report({'INFO'}, f"Connected '{closest_left_node.name}' to 'Base Color' of '{principled_node.name}' in material '{mat.name}'.")
+                     break
+
+      return {'FINISHED'}
+
 class SelectObjectsByMaterialAndTexturePanel(bpy.types.Panel):
    """Creates a Panel in the Object properties window"""
    bl_label = "Select Objects by Material and Texture"
@@ -140,19 +189,17 @@ class SelectObjectsByMaterialAndTexturePanel(bpy.types.Panel):
       layout = self.layout
       wm = context.window_manager
       
-      # Select by Material Name
       layout.prop(wm, "material_name")
       layout.operator(SelectObjectsByMaterialNameOperator.bl_idname)
 
-      # Select by Texture Name
       layout.prop(wm, "texture_name")
       layout.operator(SelectObjectsByTextureNameOperator.bl_idname)
       
-      # Reconnect Principled BSDF
       layout.operator(ReconnectPrincipledBSDFOperator.bl_idname)
       
-      # Select Objects Without Materials
       layout.operator(SelectObjectsWithoutMaterialsOperator.bl_idname)
+
+      layout.operator(ConnectClosestLeftNodeOperator.bl_idname)
 
 def register():
    bpy.utils.register_class(SelectObjectsByMaterialNameOperator)
@@ -160,6 +207,7 @@ def register():
    bpy.utils.register_class(ReconnectPrincipledBSDFOperator)
    bpy.utils.register_class(SelectObjectsByMaterialAndTexturePanel)
    bpy.utils.register_class(SelectObjectsWithoutMaterialsOperator)
+   bpy.utils.register_class(ConnectClosestLeftNodeOperator)  # Assurez-vous que cette ligne est ajoutée
    bpy.types.WindowManager.material_name = bpy.props.StringProperty(name="Material Name", default="")
    bpy.types.WindowManager.texture_name = bpy.props.StringProperty(name="Texture Name", default="")
 
@@ -169,6 +217,7 @@ def unregister():
    bpy.utils.unregister_class(ReconnectPrincipledBSDFOperator)
    bpy.utils.unregister_class(SelectObjectsByMaterialAndTexturePanel)
    bpy.utils.unregister_class(SelectObjectsWithoutMaterialsOperator)
+   bpy.utils.unregister_class(ConnectClosestLeftNodeOperator)  # Assurez-vous que cette ligne est ajoutée
    del bpy.types.WindowManager.material_name
    del bpy.types.WindowManager.texture_name
 

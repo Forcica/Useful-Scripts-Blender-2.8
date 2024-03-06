@@ -4,34 +4,40 @@ bl_info = {
    "version": (1, 0),
    "blender": (2, 80, 0),
    "location": "View3D > Tool",
-   "description": "Remove Meshes with Specific Texture Names",
+   "description": "Remove Meshes based on material name or lack thereof",
    "category": "FORCI STUFF",
 }
 
 import bpy
 
 class ForcicaRemoveMeshOperator(bpy.types.Operator):
-   """Remove Meshes with Specific Texture Names"""
+   """Remove Meshes based on material name or lack thereof"""
    bl_idname = "forcica.remove_mesh"
-   bl_label = "Remove Meshes"
+   bl_label = "Conditionally Remove Meshes"
    
    texture_name: bpy.props.StringProperty(
-      name="Texture Name to Remove",
-      description="Enter the name of the texture to remove",
-      default="gfdDefaultMat0"
+      name="Material Name to Check",
+      description="Enter the name of the material to remove meshes, leave blank to remove meshes without any materials",
+      default=""
    )
    
    def execute(self, context):
+      removed_count = 0 
+      
       for obj in bpy.context.scene.objects:
          if obj.type == 'MESH':
-               for slot in obj.material_slots:
-                  if slot.material and self.texture_name in slot.material.name:
-                     bpy.context.collection.objects.unlink(obj)
-                     bpy.data.objects.remove(obj)
-                     break
+               if self.texture_name:
+                  for slot in obj.material_slots:
+                     if slot.material and self.texture_name in slot.material.name:
+                           bpy.data.objects.remove(obj, do_unlink=True)
+                           removed_count += 1
+                           break 
+               else: 
+                  if all(slot.material is None for slot in obj.material_slots):
+                     bpy.data.objects.remove(obj, do_unlink=True)
+                     removed_count += 1
       
-      bpy.context.view_layer.update()
-      self.report({'INFO'}, f"Removed meshes with texture name containing '{self.texture_name}'")
+      self.report({'INFO'}, f"Removed {removed_count} meshes based on criteria")
       return {'FINISHED'}
 
 class ForcicaRemoveMeshPanel(bpy.types.Panel):
@@ -44,8 +50,8 @@ class ForcicaRemoveMeshPanel(bpy.types.Panel):
    
    def draw(self, context):
       layout = self.layout
-      layout.use_property_split = True  # Split properties into separate columns
-      layout.use_property_decorate = False  # Do not add decorations like angles
+      layout.use_property_split = True
+      layout.use_property_decorate = False
       
       col = layout.column()
       col.prop(context.scene.forcica_remove_mesh_settings, "texture_name")
@@ -53,9 +59,9 @@ class ForcicaRemoveMeshPanel(bpy.types.Panel):
 
 class ForcicaRemoveMeshSettings(bpy.types.PropertyGroup):
    texture_name: bpy.props.StringProperty(
-      name="Texture Name to Remove",
-      description="Enter the name of the texture to remove",
-      default="NameOfTexture"
+      name="Material Name to Check",
+      description="Enter the name of the material to check, leave blank to target meshes without materials",
+      default=""
    )
 
 def register():

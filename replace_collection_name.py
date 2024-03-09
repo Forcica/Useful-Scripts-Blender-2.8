@@ -15,17 +15,17 @@ class ForciCollectionRenamerProps(bpy.types.PropertyGroup):
       name="Old Word",
       description="Word to be replaced in the collection names",
       default="AncienMot"
-   )
+   ) # type: ignore
    new_word: bpy.props.StringProperty(
       name="New Word",
       description="New word to use in the collection names",
       default="NouveauMot"
-   )
+   ) # type: ignore
    base_word: bpy.props.StringProperty(
       name="Base Word",
       description="Base word for new collection names",
       default=""
-   )
+   ) # type: ignore
 
 class ForciCollectionRenamerOperator(bpy.types.Operator):
    """Rename collections by replacing words"""
@@ -41,50 +41,47 @@ class ForciCollectionRenamerOperator(bpy.types.Operator):
          if old_word in collection.name:
                collection.name = collection.name.replace(old_word, new_word)
 
-      # Actualiser l'interface utilisateur
       bpy.context.view_layer.update()
 
       self.report({'INFO'}, "Collections renamed successfully")
       return {'FINISHED'}
 
 class ForciCreateCollectionsFromSelectionOperator(bpy.types.Operator):
-    """Create collections from selected objects"""
-    bl_idname = "forcica.create_collections_from_selection"
-    bl_label = "Create Collections From Selection"
-    
-    collection_name: bpy.props.StringProperty(name="Collection Name", default="")
+   """Create collections from selected objects"""
+   bl_idname = "forcica.create_collections_from_selection"
+   bl_label = "Create Collections From Selection"
+   
+   collection_name: bpy.props.StringProperty(name="Collection Name", default="")
 
-    def execute(self, context):
-        # Récupérer les maillages sélectionnés
-        selected_objects = bpy.context.selected_objects
-        
-        # Récupérer le nom de la collection parente
-        parent_collection_name = bpy.context.scene.collection.name
-        
-        # Récupérer le nom de la collection à créer
-        collection_name = self.collection_name
-        
-        # Créer la collection parente si elle n'existe pas
-        if collection_name not in bpy.data.collections:
-            parent_collection = bpy.data.collections.new(collection_name)
-            bpy.context.scene.collection.children.link(parent_collection)
-        else:
-            parent_collection = bpy.data.collections[collection_name]
-        
-        # Parcourir les maillages sélectionnés
-        for index, obj in enumerate(selected_objects):
-            # Créer la collection _reference
-            reference_collection = bpy.data.collections.new(f"{context.scene.collection_renamer_props.base_word}_{index+1}_reference")
-            parent_collection.children.link(reference_collection)
-            
-            # Créer la collection _phys
-            phys_collection = bpy.data.collections.new(f"{context.scene.collection_renamer_props.base_word}_{index+1}_phys")
-            parent_collection.children.link(phys_collection)
-            
-            # Ajouter le maillage à la collection _reference
-            reference_collection.objects.link(obj)
-            
-        return {'FINISHED'}
+   def execute(self, context):
+      selected_objects = bpy.context.selected_objects
+      parent_collection_name = bpy.context.scene.collection.name
+      collection_name = self.collection_name
+      
+      # Index de décalage initial pour commencer par une collection sans _1
+      offset_index = 0
+      
+      for index, obj in enumerate(selected_objects):
+         # Création du nom de la collection en fonction de l'index
+         collection_number = index + offset_index
+         if collection_number == 0:
+               collection_suffix = ""
+         else:
+               collection_suffix = f"_{collection_number}"
+               
+         reference_collection = bpy.data.collections.new(f"{context.scene.collection_renamer_props.base_word}{collection_suffix}_reference")
+         bpy.context.scene.collection.children.link(reference_collection)
+         
+         phys_collection = bpy.data.collections.new(f"{context.scene.collection_renamer_props.base_word}{collection_suffix}_phys")
+         bpy.context.scene.collection.children.link(phys_collection)
+         
+         if obj.users_collection:  # check if the object is already in a collection
+               for collection in obj.users_collection:
+                  collection.objects.unlink(obj)
+         
+         reference_collection.objects.link(obj)
+         
+      return {'FINISHED'}
 
 class ForciCollectionNamePanel(bpy.types.Panel):
    """Creates a Panel in the Object properties window"""

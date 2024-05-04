@@ -25,31 +25,41 @@ class ForciTextureRenamerOperator(bpy.types.Operator):
       if not os.path.exists(destination_folder):
          os.makedirs(destination_folder)
 
-      processed_textures = {}  # Dictionary to store original and new file paths
+      processed_textures = {}
 
-      for material in bpy.data.materials:
-         if material.use_nodes:
-               for node in material.node_tree.nodes:
-                  if node.type == 'BSDF_PRINCIPLED' and node.inputs.get('Base Color') and node.inputs['Base Color'].is_linked:
-                     texture_node = node.inputs['Base Color'].links[0].from_node
-                     if texture_node.type == 'TEX_IMAGE':
-                           texture_path = bpy.path.abspath(texture_node.image.filepath)
-                           if os.path.isfile(texture_path):
-                              # Check if the texture was already processed
+      used_texture_files = self.get_used_texture_files()
+
+      for texture_path in used_texture_files:
+         for material in bpy.data.materials:
+               if material.use_nodes:
+                  for node in material.node_tree.nodes:
+                     if node.type == 'BSDF_PRINCIPLED' and node.inputs.get('Base Color') and node.inputs['Base Color'].is_linked:
+                           texture_node = node.inputs['Base Color'].links[0].from_node
+                           if texture_node and texture_node.type == 'TEX_IMAGE' and texture_node.image and bpy.path.abspath(texture_node.image.filepath) == texture_path:
+                              print(f"Mesh correspondant à la texture {texture_path}: {material.name}")
                               if texture_path not in processed_textures:
                                  new_texture_path = self.rename_texture(material, texture_path, destination_folder)
                                  processed_textures[texture_path] = new_texture_path
                               else:
-                                 # Use the existing texture path if it was already processed
                                  new_texture_path = processed_textures[texture_path]
 
-                              # Update the texture node with the new or existing path
                               self.update_texture_node(context, material, node, new_texture_path)
-                           else:
-                              self.report({'ERROR'}, f"Texture file not found: {texture_path}")
 
       self.report({'INFO'}, "Textures renamed successfully")
       return {'FINISHED'}
+
+   def get_used_texture_files(self):
+      used_texture_files = set()
+      for obj in bpy.data.objects:
+         if obj.type == 'MESH':
+               for slot in obj.material_slots:
+                  material = slot.material
+                  if material:
+                     for node in material.node_tree.nodes:
+                           if node.type == 'TEX_IMAGE' and node.image and node.image.filepath:
+                              texture_path = bpy.path.abspath(node.image.filepath)
+                              used_texture_files.add(texture_path)
+      return used_texture_files
 
    def rename_texture(self, material, texture_path, destination_folder):
       base_name = os.path.basename(texture_path)
@@ -58,22 +68,17 @@ class ForciTextureRenamerOperator(bpy.types.Operator):
       new_texture_base_name = f"{destination_basename}_"
       new_texture_name = f"{new_texture_base_name}{texture_extension}"
 
-      # Vérifiez d'abord si une texture renommée existe déjà dans le dossier de destination
       existing_files = [f for f in os.listdir(destination_folder) if os.path.isfile(os.path.join(destination_folder, f))]
       existing_files_base_names = [os.path.splitext(f)[0] for f in existing_files]
 
-      # Si le fichier existe déjà avec le nom de base, trouve le plus grand index utilisé
       indices = [int(name.split('_')[-1]) for name in existing_files_base_names if name.startswith(new_texture_base_name) and name.split('_')[-1].isdigit()]
       max_index = max(indices) if indices else 0
 
       new_texture_path = os.path.join(destination_folder, new_texture_name)
       if os.path.exists(new_texture_path):
-         # Si une texture avec le nom de base sans indice existe, commencez avec le prochain indice disponible
          new_texture_name = f"{new_texture_base_name}{max_index + 1}{texture_extension}"
          new_texture_path = os.path.join(destination_folder, new_texture_name)
 
-      # Si aucune texture n'existe avec le nom, ou si toutes les textures existantes ont un indice
-      # Nous devons alors copier la texture avec le nom de base si max_index est 0, sinon avec le prochain indice disponible
       if not max_index or not os.path.exists(new_texture_path):
          shutil.copy2(texture_path, new_texture_path)
 
@@ -126,22 +131,17 @@ class ForciMaterialMergerOperator(bpy.types.Operator):
       # Obtenir tous les matériaux qui ne finissent pas par un numéro de type .001, .002, etc.
       original_materials = {m.name: m for m in bpy.data.materials if not m.name.split('.')[-1].isdigit()}
 
-      # Réassigner les utilisateurs de matériaux doublons au matériau d'origine
       for mat in bpy.data.materials:
-         # Ignorer les matériaux originaux
          if mat.name in original_materials:
                continue
          
-         # Trouver le matériau original correspondant (sans suffixe)
          base_name = mat.name.rsplit('.', 1)[0]
          if base_name in original_materials:
                original_mat = original_materials[base_name]
-               # Parcourir tous les objets et remplacer les matériaux doublons
                for obj in bpy.data.objects:
                   for slot in obj.material_slots:
                      if slot.material.name == mat.name:
                            slot.material = original_mat
-               # Supprimer le matériau doublon après avoir réassigné tous ses utilisateurs
                bpy.data.materials.remove(mat)
 
       self.report({'INFO'}, "Materials merged successfully")
@@ -207,7 +207,7 @@ class ForciTextureRenamerProps(bpy.types.PropertyGroup):
 def register():
    bpy.utils.register_class(ForciTextureRenamerOperator)
    bpy.utils.register_class(ForciTextureReplacerOperator)
-   bpy.utils.register_class(ForciMaterialMergerOperator)  # Ajout de cette ligne
+   bpy.utils.register_class(ForciMaterialMergerOperator)
    bpy.utils.register_class(ForciTextureRenamerPanel)
    bpy.utils.register_class(ForciTextureReplacerPanel)
    bpy.utils.register_class(ForciTextureRenamerProps)
@@ -216,7 +216,7 @@ def register():
 def unregister():
    bpy.utils.unregister_class(ForciTextureRenamerOperator)
    bpy.utils.unregister_class(ForciTextureReplacerOperator)
-   bpy.utils.unregister_class(ForciMaterialMergerOperator)  # Ajout de cette ligne
+   bpy.utils.unregister_class(ForciMaterialMergerOperator)
    bpy.utils.unregister_class(ForciTextureRenamerPanel)
    bpy.utils.unregister_class(ForciTextureReplacerPanel)
    bpy.utils.unregister_class(ForciTextureRenamerProps)
